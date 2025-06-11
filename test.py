@@ -3,13 +3,17 @@ import pandas as pd
 import json
 import websocket
 
+
+WS_URL = "wss://sakethvetcha-excel-sheet-analyser-test-qot6rr.streamlit.app/"
+
 def send_json_to_ws(json_data):
     try:
-        ws = websocket.create_connection("ws://localhost:8080")
-        ws.send(json.dumps(json_data)).encode()
+        ws = websocket.create_connection(WS_URL)
+        ws.send(json.dumps(json_data))
         ws.close()
+        st.success(f"JSON sent to WebSocket server at {WS_URL}")
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        st.error(f"WebSocket error: {e}")
 
 def is_date(val):
     try:
@@ -51,9 +55,7 @@ def get_excel_json():
                 for _, row in meta_rows.iterrows():
                     key = str(row[first_col]).strip()
                     if key and key != "0":
-                        # Get the value immediately beside the label (second column)
                         value = row.iloc[1] if len(row) > 1 else None
-                        # If value is a pandas NA or empty string, convert to None
                         if pd.isna(value) or value == "":
                             value = None
                         meta_info[key] = value
@@ -66,9 +68,8 @@ def get_excel_json():
             st.subheader("JSON Data of Excel Sheet:")
             st.json(json_data)
             
-            # Send the JSON to the Node.js WebSocket server
+            # Send the JSON to the public Node.js WebSocket server
             send_json_to_ws(json_data)
-            st.write("Sending JSON to WebSocket")
             
         except Exception as e:
             st.error(f"Error reading the file: {str(e)}")
