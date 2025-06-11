@@ -4,7 +4,7 @@ import json
 import websocket
 
 
-WS_URL = "wss://sakethvetcha-excel-sheet-analyser-test-qot6rr.streamlit.app/"
+WS_URL = "ws://localhost:8080"
 
 def send_json_to_ws(json_data):
     try:
