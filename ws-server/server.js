@@ -3,6 +3,11 @@ const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
 
+// Async error handling wrapper for Express routes
+const asyncHandler = fn => (req, res, next) => {
+  return Promise.resolve(fn(req, res, next)).catch(next);
+};
+
 const app = express();
 
 // Request logging middleware
@@ -26,11 +31,32 @@ app.enable('trust proxy');
 
 // Enhanced error handling with origin logging
 app.use((err, req, res, next) => {
-  console.error('Express error:', err.message, 'from origin:', req.headers.origin);
-  res.status(500).json({ 
+  console.error('Express error:', err.message, '\nStack:', err.stack, '\nFrom origin:', req.headers.origin);
+  
+  // Handle different types of errors
+  const statusCode = err.statusCode || 500;
+  const response = {
     error: 'Internal server error',
-    details: process.env.NODE_ENV === 'development' ? err.message : undefined
-  });
+    timestamp: new Date().toISOString(),
+    path: req.path
+  };
+
+  // Add error details in development
+  if (process.env.NODE_ENV === 'development') {
+    response.message = err.message;
+    response.stack = err.stack;
+  }
+
+  // Handle specific error types
+  if (err.name === 'ValidationError') {
+    response.error = 'Validation Error';
+    response.details = err.details || err.message;
+  } else if (err.name === 'UnauthorizedError') {
+    response.error = 'Unauthorized';
+    response.message = 'Invalid or missing authentication';
+  }
+
+  res.status(statusCode).json(response);
 });
 
 const server = http.createServer(app);
@@ -167,26 +193,49 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// Update status endpoint to remove origin checks
-app.get('/status', (req, res) => {
-  res.json({
-    status: 'ok',
-    connections: wss?.clients?.size || 0,
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-    latestJson
-  });
-});
+// Error handling wrapper for async routes
+const handleErrors = (fn) => async (req, res, next) => {
+  try {
+    await fn(req, res, next);
+  } catch (error) {
+    console.error('Route error:', error);
+    next(error);
+  }
+};
 
+// Update status endpoint with error handling
+app.get('/status', handleErrors(async (req, res) => {
+  try {
+    const status = {
+      status: 'ok',
+      connections: wss?.clients?.size || 0,
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      // Clone to prevent reference issues
+      latestJson: latestJson ? JSON.parse(JSON.stringify(latestJson)) : null
+    };
+    res.json(status);
+  } catch (error) {
+    console.error('Status endpoint error:', error);
+    throw error; // Will be caught by handleErrors
+  }
+}));
 
 // Health check endpoint with system info
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    memoryUsage: process.memoryUsage(),
-    uptime: process.uptime()
-  });
-});
+app.get('/health', handleErrors(async (req, res) => {
+  try {
+    const health = {
+      status: 'ok',
+      memoryUsage: process.memoryUsage(),
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString()
+    };
+    res.json(health);
+  } catch (error) {
+    console.error('Health check error:', error);
+    throw error; // Will be caught by handleErrors
+  }
+}));
 
 // Server startup with enhanced logging
 const PORT = process.env.PORT || 8080;
