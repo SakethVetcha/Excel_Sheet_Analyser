@@ -8,7 +8,7 @@ const app = express();
 // Configuration
 const allowedOrigins = [
   'http://localhost:3000',        // Local development
-  'hhttps://excel-sheet-analyser-1.onrender.com', // Production frontend
+  'https://excel-sheet-analyser-1.onrender.com', // Production frontend
   'https://sakethvetcha-analyser-python-json-convertor-u1j0sm.streamlit.app/'
 ];
 
