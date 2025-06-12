@@ -11,12 +11,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// CORS configuration
+// CORS configuration - simplified without credentials
 app.use(cors({
   origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  credentials: false,
-  maxAge: 86400
+  methods: ['GET', 'POST', 'OPTIONS']
 }));
 
 // Body parser with size limit
@@ -37,12 +35,14 @@ app.use((err, req, res, next) => {
 
 const server = http.createServer(app);
 
-// Simplified WebSocket server without origin validation
-const wss = new WebSocket.Server({ server });
-
-// Remove origin-specific headers
-wss.on('headers', (headers) => {
-  headers.push('Access-Control-Allow-Credentials: true');
+// WebSocket server with origin validation
+const wss = new WebSocket.Server({ 
+  server,
+  verifyClient: (info, done) => {
+    // Allow all origins for now, but you can add validation here
+    // Example: if (info.origin !== 'https://your-allowed-origin.com') return done(false, 403, 'Origin not allowed');
+    done(true);
+  }
 });
 
 let latestJson = null;
@@ -127,14 +127,27 @@ wss.on('connection', (ws, req) => {
         }
       };
 
+      // Create a deep clone of the data to prevent race conditions
+      const broadcastData = JSON.parse(JSON.stringify(latestJson));
+      
       // Broadcast with error handling
-      wss.clients.forEach(client => {
+      const clients = Array.from(wss.clients);
+      clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
           try {
-            client.send(JSON.stringify(latestJson));
+            // Use setTimeout to prevent blocking the event loop
+            setTimeout(() => {
+              try {
+                client.send(JSON.stringify(broadcastData));
+              } catch (error) {
+                console.error('Broadcast send failed:', error);
+                if (client.readyState === WebSocket.OPEN) {
+                  client.terminate();
+                }
+              }
+            }, 0);
           } catch (error) {
-            console.error('Broadcast failed:', error);
-            client.terminate();
+            console.error('Broadcast setup failed:', error);
           }
         }
       });
