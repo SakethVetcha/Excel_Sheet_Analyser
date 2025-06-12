@@ -169,16 +169,15 @@ wss.on('connection', (ws, req) => {
 
 // Update status endpoint to remove origin checks
 app.get('/status', (req, res) => {
-  const response = {
+  res.json({
     status: 'ok',
-    connections: wss.clients.size,
+    connections: wss?.clients?.size || 0,
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
     latestJson
-  };
-
-  res.json(response);
+  });
 });
+
 
 // Health check endpoint with system info
 app.get('/health', (req, res) => {
