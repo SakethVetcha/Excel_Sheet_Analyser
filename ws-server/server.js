@@ -5,24 +5,21 @@ const cors = require('cors');
 
 const app = express();
 
-// Add CORS middleware
+// Configuration
+const allowedOrigins = [
+  'http://localhost:3000',        // Local development
+  'hhttps://excel-sheet-analyser-1.onrender.com', // Production frontend
+  'https://sakethvetcha-analyser-python-json-convertor-u1j0sm.streamlit.app/'
+];
+
+// CORS middleware
 app.use(cors({
-  origin: '*', // Be more specific in production
+  origin: allowedOrigins,
   methods: ['GET', 'POST'],
   credentials: true
 }));
 
-// Add status endpoint
-app.get('/status', (req, res) => {
-  res.json({
-    status: 'ok',
-    connections: wss.clients.size,
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Add error handling middleware
+// Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Express error:', err);
   res.status(500).json({ error: 'Internal server error' });
@@ -30,20 +27,18 @@ app.use((err, req, res, next) => {
 
 const server = http.createServer(app);
 
-// WebSocket server with error handling
-const wss = new WebSocket.Server({ 
+// WebSocket server configuration
+const wss = new WebSocket.Server({
   server,
-  // Add WebSocket specific CORS handling
   verifyClient: (info) => {
-    // Allow all origins in development
-    // In production, validate origin
-    return true;
+    const origin = info.origin;
+    return allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production';
   }
 });
 
 let latestJson = null;
 
-// Handle WebSocket server errors
+// WebSocket event handlers
 wss.on('error', (error) => {
   console.error('WebSocket server error:', error);
 });
@@ -52,31 +47,40 @@ wss.on('connection', (ws, req) => {
   const clientIp = req.socket.remoteAddress;
   console.log(`Client connected from ${clientIp}`);
 
-  // Add connection error handling
+  // Send latest data to new client
+  if (latestJson) {
+    ws.send(JSON.stringify(latestJson));
+  }
+
   ws.on('error', (error) => {
     console.error(`WebSocket error from ${clientIp}:`, error);
   });
 
-  ws.on('message', (data, isBinary) => {
+  ws.on('message', (data) => {
     try {
-      const message = isBinary ? data : data.toString();
+      const message = data.toString();
       console.log('Received:', message);
       
-      latestJson = JSON.parse(message);
+      // Validate and parse JSON
+      const jsonData = JSON.parse(message);
+      if (typeof jsonData !== 'object' || jsonData === null) {
+        throw new Error('Invalid JSON structure');
+      }
+      
+      latestJson = jsonData;
 
       // Broadcast to all clients except sender
       wss.clients.forEach(client => {
         if (client !== ws && client.readyState === WebSocket.OPEN) {
-          try {
-            client.send(message);
-          } catch (error) {
-            console.error('Broadcast error:', error);
-          }
+          client.send(JSON.stringify(jsonData));
         }
       });
     } catch (error) {
       console.error('Message processing error:', error);
-      ws.send(JSON.stringify({ error: 'Invalid message format' }));
+      ws.send(JSON.stringify({ 
+        error: 'Invalid message format',
+        details: error.message 
+      }));
     }
   });
 
@@ -85,14 +89,31 @@ wss.on('connection', (ws, req) => {
   });
 });
 
+// Status endpoint (defined after WebSocket server creation)
+app.get('/status', (req, res) => {
+  res.json({
+    status: 'ok',
+    connections: wss.clients.size,
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    latestJson  // Now includes the latest data
+  });
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).end();
+});
+
+// Server startup
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on http://localhost:${PORT} and ws://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 }).on('error', (error) => {
   console.error('Server startup error:', error);
 });
 
-// Handle process errors
+// Process error handling
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
 });
