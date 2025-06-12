@@ -12,6 +12,16 @@ app.use(cors({
   credentials: true
 }));
 
+// Add status endpoint
+app.get('/status', (req, res) => {
+  res.json({
+    status: 'ok',
+    connections: wss.clients.size,
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Add error handling middleware
 app.use((err, req, res, next) => {
   console.error('Express error:', err);
