@@ -19,6 +19,9 @@ app.use(cors({
   credentials: true
 }));
 
+// Enable Cloudflare proxy trust
+app.enable('trust proxy');
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Express error:', err);
@@ -27,13 +30,30 @@ app.use((err, req, res, next) => {
 
 const server = http.createServer(app);
 
-// WebSocket server configuration
+// Improved WebSocket server configuration
 const wss = new WebSocket.Server({
   server,
-  verifyClient: (info) => {
+  verifyClient: (info, done) => {
     const origin = info.origin;
-    return allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production';
+    console.log('WebSocket connection attempt from:', origin);
+    
+    const isAllowed = allowedOrigins.some(allowed => 
+      origin === allowed || 
+      origin?.startsWith(allowed.replace(/https?:\/\//, ''))
+    );
+
+    if (isAllowed || process.env.NODE_ENV !== 'production') {
+      done(true);
+    } else {
+      console.warn('Rejected WebSocket connection from:', origin);
+      done(false, 401, 'Unauthorized');
+    }
   }
+});
+
+// Add Cloudflare WebSocket headers
+wss.on('headers', (headers) => {
+  headers.push('Access-Control-Allow-Origin: https://sakethvetcha-analyser-python-json-convertor-u1j0sm.streamlit.app');
 });
 
 let latestJson = null;
@@ -91,6 +111,11 @@ wss.on('connection', (ws, req) => {
 
 // Status endpoint (defined after WebSocket server creation)
 app.get('/status', (req, res) => {
+  const clientOrigin = req.headers.origin;
+  if (!allowedOrigins.includes(clientOrigin)) {
+    return res.status(403).json({ error: 'Origin not allowed' });
+  }
+  
   res.json({
     status: 'ok',
     connections: wss.clients.size,
