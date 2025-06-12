@@ -5,24 +5,11 @@ const cors = require('cors');
 
 const app = express();
 
-// Configuration - FIXED ORIGINS AND ADDED FLEXIBLE MATCHING
-const allowedOrigins = [
-  'http://localhost:3000',
-  'https://excel-sheet-analyser-1.onrender.com',
-  'https://sakethvetcha-analyser-python-json-convertor-u1j0sm.streamlit.app' // Removed trailing slash
-];
-
-// Enhanced CORS configuration
+// Simple CORS configuration with * origin
 app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.some(o => origin.startsWith(o))) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: '*',
   methods: ['GET', 'POST'],
-  credentials: true
+  credentials: false  // Must be false when using '*'
 }));
 
 // Improved proxy trust configuration
@@ -39,34 +26,12 @@ app.use((err, req, res, next) => {
 
 const server = http.createServer(app);
 
-// WebSocket server with better origin validation
-const wss = new WebSocket.Server({
-  server,
-  verifyClient: (info, done) => {
-    const origin = info.origin;
-    console.log('WebSocket connection attempt from:', origin);
-    
-    const isAllowed = allowedOrigins.some(allowed => {
-      // Flexible matching for subdomains and variations
-      return origin?.startsWith(allowed) || 
-             origin?.endsWith(allowed.replace(/https?:\/\//, ''));
-    });
+// Simplified WebSocket server without origin validation
+const wss = new WebSocket.Server({ server });
 
-    if (isAllowed || process.env.NODE_ENV !== 'production') {
-      done(true);
-    } else {
-      console.warn('Rejected WebSocket connection from:', origin);
-      done(false, 401, 'Unauthorized');
-    }
-  }
-});
-
-// Enhanced WebSocket headers for CORS
+// Remove origin-specific headers
 wss.on('headers', (headers) => {
-  headers.push(
-    'Access-Control-Allow-Origin: https://sakethvetcha-analyser-python-json-convertor-u1j0sm.streamlit.app',
-    'Access-Control-Allow-Credentials: true'
-  );
+  headers.push('Access-Control-Allow-Credentials: true');
 });
 
 let latestJson = null;
@@ -138,18 +103,14 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// Enhanced status endpoint with safe origin handling
+// Update status endpoint to remove origin checks
 app.get('/status', (req, res) => {
-  const clientOrigin = req.headers.origin;
-  
-  // Only include origin in response if it's allowed
   const response = {
     status: 'ok',
     connections: wss.clients.size,
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
-    latestJson,
-    ...(allowedOrigins.includes(clientOrigin) && { yourOrigin: clientOrigin })
+    latestJson
   };
 
   res.json(response);
