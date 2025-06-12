@@ -5,42 +5,52 @@ const cors = require('cors');
 
 const app = express();
 
-// Configuration
+// Configuration - FIXED ORIGINS AND ADDED FLEXIBLE MATCHING
 const allowedOrigins = [
-  'http://localhost:3000',        // Local development
-  'https://excel-sheet-analyser-1.onrender.com', // Production frontend
-  'https://sakethvetcha-analyser-python-json-convertor-u1j0sm.streamlit.app/'
+  'http://localhost:3000',
+  'https://excel-sheet-analyser-1.onrender.com',
+  'https://sakethvetcha-analyser-python-json-convertor-u1j0sm.streamlit.app' // Removed trailing slash
 ];
 
-// CORS middleware
+// Enhanced CORS configuration
 app.use(cors({
-  origin: allowedOrigins,
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.some(o => origin.startsWith(o))) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST'],
   credentials: true
 }));
 
-// Enable Cloudflare proxy trust
+// Improved proxy trust configuration
 app.enable('trust proxy');
 
-// Error handling middleware
+// Enhanced error handling with origin logging
 app.use((err, req, res, next) => {
-  console.error('Express error:', err);
-  res.status(500).json({ error: 'Internal server error' });
+  console.error('Express error:', err.message, 'from origin:', req.headers.origin);
+  res.status(500).json({ 
+    error: 'Internal server error',
+    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
 });
 
 const server = http.createServer(app);
 
-// Improved WebSocket server configuration
+// WebSocket server with better origin validation
 const wss = new WebSocket.Server({
   server,
   verifyClient: (info, done) => {
     const origin = info.origin;
     console.log('WebSocket connection attempt from:', origin);
     
-    const isAllowed = allowedOrigins.some(allowed => 
-      origin === allowed || 
-      origin?.startsWith(allowed.replace(/https?:\/\//, ''))
-    );
+    const isAllowed = allowedOrigins.some(allowed => {
+      // Flexible matching for subdomains and variations
+      return origin?.startsWith(allowed) || 
+             origin?.endsWith(allowed.replace(/https?:\/\//, ''));
+    });
 
     if (isAllowed || process.env.NODE_ENV !== 'production') {
       done(true);
@@ -51,25 +61,31 @@ const wss = new WebSocket.Server({
   }
 });
 
-// Add Cloudflare WebSocket headers
+// Enhanced WebSocket headers for CORS
 wss.on('headers', (headers) => {
-  headers.push('Access-Control-Allow-Origin: https://sakethvetcha-analyser-python-json-convertor-u1j0sm.streamlit.app');
+  headers.push(
+    'Access-Control-Allow-Origin: https://sakethvetcha-analyser-python-json-convertor-u1j0sm.streamlit.app',
+    'Access-Control-Allow-Credentials: true'
+  );
 });
 
 let latestJson = null;
 
-// WebSocket event handlers
+// WebSocket event handlers with improved validation
 wss.on('error', (error) => {
   console.error('WebSocket server error:', error);
 });
 
 wss.on('connection', (ws, req) => {
   const clientIp = req.socket.remoteAddress;
-  console.log(`Client connected from ${clientIp}`);
+  console.log(`Client connected from ${clientIp} (Origin: ${req.headers.origin})`);
 
-  // Send latest data to new client
+  // Send latest data to new client with versioning
   if (latestJson) {
-    ws.send(JSON.stringify(latestJson));
+    ws.send(JSON.stringify({
+      ...latestJson,
+      _meta: { timestamp: new Date().toISOString() }
+    }));
   }
 
   ws.on('error', (error) => {
@@ -79,27 +95,40 @@ wss.on('connection', (ws, req) => {
   ws.on('message', (data) => {
     try {
       const message = data.toString();
-      console.log('Received:', message);
+      console.log('Received raw message:', message);
       
+      // Validate message size
+      if (message.length > 100000) { // 100KB limit
+        throw new Error('Message exceeds size limit');
+      }
+
       // Validate and parse JSON
       const jsonData = JSON.parse(message);
       if (typeof jsonData !== 'object' || jsonData === null) {
         throw new Error('Invalid JSON structure');
       }
       
-      latestJson = jsonData;
+      // Update latest JSON with timestamp
+      latestJson = {
+        ...jsonData,
+        _meta: { receivedAt: new Date().toISOString() }
+      };
 
-      // Broadcast to all clients except sender
+      // Broadcast with error handling
       wss.clients.forEach(client => {
         if (client !== ws && client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify(jsonData));
+          try {
+            client.send(JSON.stringify(latestJson));
+          } catch (error) {
+            console.error('Broadcast failed:', error);
+          }
         }
       });
     } catch (error) {
       console.error('Message processing error:', error);
       ws.send(JSON.stringify({ 
         error: 'Invalid message format',
-        details: error.message 
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
       }));
     }
   });
@@ -109,38 +138,45 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// Status endpoint (defined after WebSocket server creation)
+// Enhanced status endpoint with safe origin handling
 app.get('/status', (req, res) => {
   const clientOrigin = req.headers.origin;
-  if (!allowedOrigins.includes(clientOrigin)) {
-    return res.status(403).json({ error: 'Origin not allowed' });
-  }
   
-  res.json({
+  // Only include origin in response if it's allowed
+  const response = {
     status: 'ok',
     connections: wss.clients.size,
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
-    latestJson  // Now includes the latest data
+    latestJson,
+    ...(allowedOrigins.includes(clientOrigin) && { yourOrigin: clientOrigin })
+  };
+
+  res.json(response);
+});
+
+// Health check endpoint with system info
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    memoryUsage: process.memoryUsage(),
+    uptime: process.uptime()
   });
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).end();
-});
-
-// Server startup
+// Server startup with enhanced logging
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
+  console.log('Allowed origins:', allowedOrigins);
 }).on('error', (error) => {
   console.error('Server startup error:', error);
 });
 
-// Process error handling
+// Process error handling with exit codes
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
+  process.exit(1);
 });
 
 process.on('unhandledRejection', (error) => {
